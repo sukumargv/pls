@@ -42,7 +42,12 @@ create_default_config() {
     "fish": "Generate Fish shell commands using Fish-specific syntax (e.g., 'set' for variables, Fish conditionals).",
     "bash": "Generate Bash shell commands using POSIX syntax.",
     "zsh": "Generate Zsh shell commands using Zsh-specific features if beneficial."
-  }
+  },
+  "ignored_files": [
+    ".git",
+    "node_modules",
+    "*.log"
+  ]
 }
 EOL
 }
@@ -145,8 +150,31 @@ generate_command_with_context() {
   local temperature=$(jq -r '.temperature' "$CONFIG_FILE")
   local system_prompt=$(jq -r '.system_prompt' "$CONFIG_FILE")
   local shell_specific=$(jq -r ".shell_specific_prompts.\"$current_shell\" // empty" "$CONFIG_FILE")
+  local ignored_files
+  ignored_files=$(jq -r '.ignored_files[]? // empty' "$CONFIG_FILE")
 
-  # Step 1: Identify relevant commands
+  # Step 1: List files, honoring ignored_files
+  info "Scanning current directory..."
+  local find_command="find . -maxdepth 1 -type f"
+  local file_list=""
+  
+  if [ -n "$ignored_files" ]; then
+    for pattern in $ignored_files; do
+      # Shell-escape the pattern for the find command
+      local escaped_pattern
+      escaped_pattern=$(printf '%s\n' "$pattern" | sed 's/[][*?]/\\&/g')
+      find_command+=" -not -name '$escaped_pattern'"
+    done
+  fi
+  
+  file_list=$(eval "$find_command" | sed 's|^\./||' | head -n 20) # Limit to 20 files
+  if [ -n "$file_list" ]; then
+    debug "Found files:\n$file_list"
+  else
+    debug "No files found or all were ignored."
+  fi
+
+  # Step 2: Identify relevant commands
   info "Identifying relevant commands..."
   local relevance_prompt="Based on the following user request, what is the most relevant command-line tool to solve the problem? List the single most relevant command name, and nothing else. If no command is relevant, output 'unknown'. Do not include any explanations or formatting. User request: $user_prompt"
   
@@ -154,30 +182,45 @@ generate_command_with_context() {
   relevant_cmd=$(stream_response "$model" "$ollama_url" "$relevance_prompt" "$temperature")
   
   if [ -z "$relevant_cmd" ] || [[ "$relevant_cmd" == "unknown" ]]; then
-    info "Could not identify a relevant command. Falling back to fast mode."
+  local final_prompt
+  final_prompt=$(cat <<EOF
+$system_prompt $shell_specific
+
+Here is the help text for the relevant command '$relevant_cmd':
+
+$help_text
+
+User request: $user_prompt
+EOF
+)
     generate_command_fast "$user_prompt" "$current_shell"
     return
   fi
   
-  # --- SECURITY VALIDATION: BEGIN ---
-  # 1. Validate command name format (alphanumeric, underscore, dash, dot)
+  # --- SECURITY VALIDATION ---
   if ! [[ "$relevant_cmd" =~ ^[a-zA-Z0-9_.-]+$ ]]; then
     error "Identified command '$relevant_cmd' contains unsafe characters. Falling back to fast mode."
     generate_command_fast "$user_prompt" "$current_shell"
     return
   fi
-
-  # 2. Verify command existence and executability
   if ! command -v "$relevant_cmd" >/dev/null 2>&1; then
     error "Identified command '$relevant_cmd' not found or not executable. Falling back to fast mode."
     generate_command_fast "$user_prompt" "$current_shell"
     return
   fi
-  # --- SECURITY VALIDATION: END ---
+
+  read -p "$(echo -e "${YELLOW}Allow running '${relevant_cmd} --help' to generate a better command? (y/N)${NC} ")" -n 1 -r
+  echo >&2
+  if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    info "Permission denied. Falling back to fast mode."
+    generate_command_fast "$user_prompt" "$current_shell"
+    return
+  fi
+  # --- END SECURITY VALIDATION ---
 
   debug "Identified relevant command: $relevant_cmd"
 
-  # Step 2: Get help text for the command
+  # Step 3: Get help text for the command
   info "Getting help text for '$relevant_cmd'..."
   local help_text
   if ! help_text=$($relevant_cmd --help 2>&1); then
@@ -185,20 +228,30 @@ generate_command_with_context() {
     generate_command_fast "$user_prompt" "$current_shell"
     return
   fi
-
   debug "Help text captured."
 
-  # Step 3: Construct final prompt and generate command
+  # Step 4: Construct final prompt and generate command
   info "Generating command with context..."
   
-  # Truncate help text to avoid exceeding context window limits
+  # Truncate help text
   local max_len=4096
   if [ "${#help_text}" -gt "$max_len" ]; then
     help_text="${help_text:0:$max_len}"
     debug "Truncated help text to $max_len characters."
   fi
 
-  local final_prompt="$system_prompt $shell_specific \n\nHere is the help text for the relevant command '$relevant_cmd':\n\n$help_text\n\nUser request: $user_prompt"
+  local final_prompt
+  final_prompt=$(cat <<EOF
+$system_prompt $shell_specific
+$(if [ -n "$file_list" ]; then printf "\n\nHere is a list of files in the current directory (up to 20):\n%s" "$file_list"; fi)
+
+Here is the help text for the relevant command '$relevant_cmd':
+
+$help_text
+
+User request: $user_prompt
+EOF
+)
   
   stream_response "$model" "$ollama_url" "$final_prompt" "$temperature"
 }
@@ -209,34 +262,55 @@ main() {
   local use_fast_mode=0
   local user_prompt=""
   local current_shell="bash"
+  local valid_shells=("bash" "zsh" "fish")
+  local positional_args=()
   
   # Argument parsing
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --debug) _DEBUG_MODE=1; shift ;;
       -v|--version)
-        # Simplified version handling for now
-        echo "pls-engine v0.1.0 (dev)" # Placeholder
+        local version
+        version=$(cat "$(dirname "$0")/../VERSION" 2>/dev/null || echo "unknown")
+        echo "pls-engine $version"
         exit 0
         ;;
       -f|--fast) use_fast_mode=1; shift ;;
       *)
-        if [[ -z "$user_prompt" ]]; then
-          user_prompt="$1"
-        else
-          current_shell="$1"
-        fi
+        positional_args+=("$1")
         shift
         ;;
     esac
   done
+
+  # Process positional arguments: check if last arg is a valid shell
+  if [[ ${#positional_args[@]} -gt 0 ]]; then
+    local last_arg="${positional_args[-1]}"
+    local is_valid_shell=0
+    for shell in "${valid_shells[@]}"; do
+      if [[ "$last_arg" == "$shell" ]]; then
+        is_valid_shell=1
+        break
+      fi
+    done
+    
+    if [[ $is_valid_shell -eq 1 && ${#positional_args[@]} -gt 1 ]]; then
+      # Last arg is a valid shell and there are other args before it
+      current_shell="${positional_args[-1]}"
+      unset 'positional_args[-1]'
+      user_prompt="${positional_args[*]}"
+    else
+      # All args are part of the prompt
+      user_prompt="${positional_args[*]}"
+    fi
+  fi
 
   debug "User prompt received: '$user_prompt'"
   debug "Shell context: $current_shell"
   debug "Fast mode: $use_fast_mode"
 
   # Pre-flight checks
-  [ -z "$user_prompt" ] && { error "Usage: pls-engine \"<prompt>\" [shell]"; exit 1; }
+  [ -z "$user_prompt" ] && { error "Usage: pls-engine <prompt> [bash|zsh|fish]"; exit 1; }
   command -v jq >/dev/null || { error "jq required"; exit 1; }
   command -v curl >/dev/null || { error "curl required"; exit 1; }
   [ ! -f "$CONFIG_FILE" ] && create_default_config
