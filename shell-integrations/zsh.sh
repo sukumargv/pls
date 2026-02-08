@@ -3,16 +3,16 @@
 pls() {
     local debug_flag=""
     local version_flag=""
+    local fast_flag=""
     local -a prompt_parts
 
     for arg in "$@"; do
-        if [[ "$arg" == "--debug" ]]; then
-            debug_flag="--debug"
-        elif [[ "$arg" == "--version" || "$arg" == "-v" ]]; then
-            version_flag="$arg"
-        else
-            prompt_parts+=("$arg")
-        fi
+        case "$arg" in
+            --debug) debug_flag="--debug" ;;
+            -v|--version) version_flag="$arg" ;;
+            -f|--fast) fast_flag="$arg" ;;
+            *) prompt_parts+=("$arg") ;;
+        esac
     done
 
     if [[ -n "$version_flag" && ${#prompt_parts[@]} -eq 0 ]]; then
@@ -21,18 +21,14 @@ pls() {
     fi
 
     if [[ ${#prompt_parts[@]} -eq 0 ]]; then
-        echo "Usage: pls [--debug | --version] <your natural language command>" >&2
+        echo "Usage: pls [--debug] [--fast | -f] [--version | -v] <your natural language command>" >&2
         return 1
     fi
 
     local user_prompt="${(j: :)prompt_parts}"
     local suggested_cmd
 
-    if [[ -n "$debug_flag" ]]; then
-        suggested_cmd="$(pls-engine "$debug_flag" "$user_prompt" "zsh")"
-    else
-        suggested_cmd="$(pls-engine "$user_prompt" "zsh")"
-    fi
+    suggested_cmd="$(pls-engine ${debug_flag} ${fast_flag} "$user_prompt" "zsh")"
 
     if [[ -n "$suggested_cmd" ]]; then
         print -s -- "$suggested_cmd"
