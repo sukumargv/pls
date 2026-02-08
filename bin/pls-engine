@@ -159,6 +159,22 @@ generate_command_with_context() {
     return
   fi
   
+  # --- SECURITY VALIDATION: BEGIN ---
+  # 1. Validate command name format (alphanumeric, underscore, dash, dot)
+  if ! [[ "$relevant_cmd" =~ ^[a-zA-Z0-9_.-]+$ ]]; then
+    error "Identified command '$relevant_cmd' contains unsafe characters. Falling back to fast mode."
+    generate_command_fast "$user_prompt" "$current_shell"
+    return
+  fi
+
+  # 2. Verify command existence and executability
+  if ! command -v "$relevant_cmd" >/dev/null 2>&1; then
+    error "Identified command '$relevant_cmd' not found or not executable. Falling back to fast mode."
+    generate_command_fast "$user_prompt" "$current_shell"
+    return
+  fi
+  # --- SECURITY VALIDATION: END ---
+
   debug "Identified relevant command: $relevant_cmd"
 
   # Step 2: Get help text for the command
