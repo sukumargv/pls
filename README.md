@@ -118,6 +118,37 @@ pkill python
 
 You'll see the generated command appear in your shell's input line with a streaming animation. Press **Enter** to run it, **edit** it first, or **Ctrl+C** to cancel. All suggested commands are automatically added to your shell history.
 
+### Command-Line Options
+
+```bash
+pls [OPTIONS] <prompt> [shell]
+```
+
+**Options**:
+- `--fast` / `-f` - Fast mode: skip context analysis, generate command directly
+- `--debug` - Show detailed debugging information
+- `--verbose` - Show informational debugging output
+- `--version` / `-v` - Display version information
+
+**Arguments**:
+- `<prompt>` - Natural language description of the command (required)
+- `[shell]` - Target shell: `bash`, `zsh`, or `fish` (optional, auto-detected if not specified)
+
+**Examples**:
+```bash
+# Fast mode for quick responses
+pls --fast "find large log files"
+
+# Verbose mode to see what's happening
+pls --verbose "list all running processes"
+
+# Context-aware (default) with debug output
+pls --debug "compress all images" 
+
+# Specify target shell explicitly
+pls "list files" bash
+```
+
 ## Configuration
 
 The first time you run `pls`, it creates a configuration file at `~/.config/pls/config.json`. 
@@ -185,6 +216,24 @@ Run with debug output:
 ```bash
 pls --debug your command here
 ```
+
+Debug mode shows:
+- Full JSON payloads sent to Ollama
+- Detailed parsing information
+- Internal state changes
+
+### Verbose Mode
+
+For less detailed but still informative output:
+```bash
+pls --verbose your command here
+```
+
+Verbose mode shows:
+- Connection status
+- Execution mode (fast vs context-aware)
+- Response processing status
+- Final command length
 
 ## Similar Projects
 

@@ -9,5 +9,7 @@
     "fish": "Generate Fish shell commands using Fish-specific syntax when appropriate (e.g., 'set' for variables, Fish-style conditionals). Prefer Fish built-ins and idiomatic Fish constructs.",
     "bash": "Generate Bash shell commands using standard POSIX syntax and Bash-specific features when needed. Prefer widely compatible syntax unless Bash-specific features provide clear benefits.",
     "zsh": "Generate Zsh shell commands that can leverage Zsh-specific features and expansions when appropriate. You may use Zsh globbing, parameter expansion, and other Zsh-specific syntax when beneficial."
-  }
+  },
+  "max_context_files": 20,
+  "max_help_text_length": 4096
 }

@@ -1,0 +1,50 @@
+repos:
+  # ShellCheck - Static analysis tool for shell scripts
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.9.0.7
+    hooks:
+      - id: shellcheck
+        name: ShellCheck - Shell Script Linting
+        description: Check shell scripts for common errors and style issues
+        entry: shellcheck -x
+        language: python
+        types: [shell]
+        args: []
+
+  # Bash syntax validation
+  - repo: local
+    hooks:
+      - id: bash-validator
+        name: Bash Syntax Check
+        description: Validate bash scripts have valid syntax
+        entry: bash -n
+        language: system
+        types: [shell]
+        pass_filenames: true
+        stages: [commit]
+
+  # JSON validation
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
+    hooks:
+      - id: check-json
+        name: Check JSON validity
+        description: Validate that JSON files are properly formatted
+        args: ['--unsafe']
+      - id: check-yaml
+        name: Check YAML validity
+      - id: end-of-file-fixer
+        name: Fix end of files
+        description: Ensure files end with newline
+      - id: trailing-whitespace
+        name: Trim trailing whitespace
+        args: [--markdown-args=--ignore-all]
+
+  # Markdown linting (optional but recommended)
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: v0.37.0
+    hooks:
+      - id: markdownlint
+        name: Markdown Linter
+        description: Check markdown files for style issues
+        types: [markdown]

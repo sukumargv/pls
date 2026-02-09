@@ -1,0 +1,75 @@
+name: Lint and Test
+
+on:
+  push:
+    branches: [ master, main, feature/* ]
+  pull_request:
+    branches: [ master, main ]
+
+jobs:
+  shellcheck:
+    runs-on: ubuntu-latest
+    name: ShellCheck Lint
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run shellcheck on all shell scripts
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+          
+          # Check main engine script
+          shellcheck -x bin/pls-engine
+          
+          # Check shell integrations
+          shellcheck -x shell-integrations/*.sh
+          shellcheck -x shell-integrations/*.fish
+          
+          # Check installer
+          shellcheck -x install.sh
+
+  integration-tests:
+    runs-on: ubuntu-latest
+    needs: shellcheck
+    name: Integration Tests
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq curl
+          
+          # Install Ollama
+          curl -fsSL https://ollama.ai/install.sh | sh || true
+
+      - name: Start Ollama service
+        run: |
+          # Start Ollama in background (if available)
+          ollama serve > /tmp/ollama.log 2>&1 &
+          sleep 2
+        continue-on-error: true
+
+      - name: Run basic integration tests
+        run: |
+          cd "${{ github.workspace }}"
+          bash tests/integration/test_shell_integration.sh
+
+  syntax-check:
+    runs-on: ubuntu-latest
+    name: Bash Syntax Validation
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate bash syntax
+        run: |
+          # Check syntax of all shell scripts
+          bash -n bin/pls-engine
+          bash -n install.sh
+          bash -n shell-integrations/bash.sh
+          
+          # Fish syntax check (if available)
+          which fish >/dev/null 2>&1 && fish -n shell-integrations/fish.fish || echo "Fish shell not installed, skipping"

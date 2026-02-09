@@ -14,7 +14,9 @@ FRAMES=("⠋" "⠙" "⠹" "⠸" "⠼" "⠴" "⠦" "⠧" "⠇" "⠏")
 
 # --- Logger and Utilities ---
 _DEBUG_MODE=0
+_VERBOSE_MODE=0
 debug() { [ "${_DEBUG_MODE}" -eq 1 ] && echo -e "${YELLOW}[DEBUG]${NC} $*" >&2; }
+verbose() { [ "${_VERBOSE_MODE}" -eq 1 ] && echo -e "${BLUE}[VERBOSE]${NC} $*" >&2; }
 error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 info() { echo -e "${BLUE}[INFO]${NC} $*" >&2; }
 
@@ -47,7 +49,9 @@ create_default_config() {
     ".git",
     "node_modules",
     "*.log"
-  ]
+  ],
+  "max_context_files": 20,
+  "max_help_text_length": 4096
 }
 EOL
 }
@@ -56,6 +60,10 @@ EOL
 stream_response() {
   local model="$1" url="$2" prompt="$3" temp="$4"
   local json_payload
+  
+  verbose "Connecting to Ollama at $url with model: $model"
+  verbose "Temperature: $temp"
+  
   json_payload=$(jq -n \
     --arg model "$model" \
     --arg prompt "$prompt" \
@@ -69,17 +77,21 @@ stream_response() {
   local response_file
   response_file=$(mktemp)
   
+  verbose "Checking Ollama connectivity..."
   if ! curl -s --head "$url" | head -n 1 | grep "200 OK" > /dev/null; then
       error "Cannot connect to Ollama at $url. Is 'ollama serve' running?"
       rm -f "$response_file"
       return 1
   fi
   
+  verbose "Connected to Ollama. Sending request..."
   curl -s "$url/api/generate" -d "$json_payload" > "$response_file" &
   local curl_pid=$!
 
   show_thinking "$curl_pid"
   wait "$curl_pid"
+  
+  verbose "Response received. Processing..."
   
   if first_line=$(head -n 1 "$response_file"); ollama_error=$(echo "$first_line" | jq -r '.error // empty'); [ -n "$ollama_error" ]; then
     error "Ollama API error: $ollama_error"
@@ -122,6 +134,7 @@ generate_command_fast() {
   local current_shell="$2"
   
   debug "Using fast mode (single LLM call)."
+  verbose "Mode: Fast (no context analysis)"
 
   local model=$(jq -r '.model' "$CONFIG_FILE")
   local ollama_url=$(jq -r '.ollama_url' "$CONFIG_FILE")
@@ -134,6 +147,7 @@ generate_command_fast() {
   debug "Model: $model"
   debug "Ollama URL: $ollama_url"
   debug "Temperature: $temperature"
+  verbose "Sending prompt to Ollama..."
 
   info "Generating command for $current_shell..."
   stream_response "$model" "$ollama_url" "$final_prompt" "$temperature"
@@ -152,6 +166,8 @@ generate_command_with_context() {
   local shell_specific=$(jq -r ".shell_specific_prompts.\"$current_shell\" // empty" "$CONFIG_FILE")
   local ignored_files
   ignored_files=$(jq -r '.ignored_files[]? // empty' "$CONFIG_FILE")
+  local max_context_files
+  max_context_files=$(jq -r '.max_context_files // 20' "$CONFIG_FILE")
 
   # Step 1: List files, honoring ignored_files
   info "Scanning current directory..."
@@ -167,7 +183,7 @@ generate_command_with_context() {
     done
   fi
   
-  file_list=$(eval "$find_command" | sed 's|^\./||' | head -n 20) # Limit to 20 files
+  file_list=$(eval "$find_command" | sed 's|^\./||' | head -n "$max_context_files")
   if [ -n "$file_list" ]; then
     debug "Found files:\n$file_list"
   else
@@ -182,17 +198,7 @@ generate_command_with_context() {
   relevant_cmd=$(stream_response "$model" "$ollama_url" "$relevance_prompt" "$temperature")
   
   if [ -z "$relevant_cmd" ] || [[ "$relevant_cmd" == "unknown" ]]; then
-  local final_prompt
-  final_prompt=$(cat <<EOF
-$system_prompt $shell_specific
-
-Here is the help text for the relevant command '$relevant_cmd':
-
-$help_text
-
-User request: $user_prompt
-EOF
-)
+    debug "No relevant command identified. Falling back to fast mode."
     generate_command_fast "$user_prompt" "$current_shell"
     return
   fi
@@ -233,17 +239,19 @@ EOF
   # Step 4: Construct final prompt and generate command
   info "Generating command with context..."
   
+  local max_help_text_length
+  max_help_text_length=$(jq -r '.max_help_text_length // 4096' "$CONFIG_FILE")
+  
   # Truncate help text
-  local max_len=4096
-  if [ "${#help_text}" -gt "$max_len" ]; then
-    help_text="${help_text:0:$max_len}"
-    debug "Truncated help text to $max_len characters."
+  if [ "${#help_text}" -gt "$max_help_text_length" ]; then
+    help_text="${help_text:0:$max_help_text_length}"
+    debug "Truncated help text to $max_help_text_length characters."
   fi
 
   local final_prompt
   final_prompt=$(cat <<EOF
 $system_prompt $shell_specific
-$(if [ -n "$file_list" ]; then printf "\n\nHere is a list of files in the current directory (up to 20):\n%s" "$file_list"; fi)
+$(if [ -n "$file_list" ]; then printf "\n\nHere is a list of files in the current directory (up to $max_context_files):\n%s" "$file_list"; fi)
 
 Here is the help text for the relevant command '$relevant_cmd':
 
@@ -268,7 +276,8 @@ main() {
   # Argument parsing
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --debug) _DEBUG_MODE=1; shift ;;
+      --debug) _DEBUG_MODE=1; _VERBOSE_MODE=1; shift ;;
+      --verbose) _VERBOSE_MODE=1; shift ;;
       -v|--version)
         local version
         version=$(cat "$(dirname "$0")/../VERSION" 2>/dev/null || echo "unknown")
@@ -308,17 +317,22 @@ main() {
   debug "User prompt received: '$user_prompt'"
   debug "Shell context: $current_shell"
   debug "Fast mode: $use_fast_mode"
+  verbose "Language model: $(jq -r '.model' "$CONFIG_FILE" 2>/dev/null || echo 'unknown')"
 
   # Pre-flight checks
   [ -z "$user_prompt" ] && { error "Usage: pls-engine <prompt> [bash|zsh|fish]"; exit 1; }
   command -v jq >/dev/null || { error "jq required"; exit 1; }
   command -v curl >/dev/null || { error "curl required"; exit 1; }
   [ ! -f "$CONFIG_FILE" ] && create_default_config
+  
+  verbose "All dependencies available"
 
   local suggested_cmd=""
   if [ "$use_fast_mode" -eq 1 ]; then
+    verbose "Executing in FAST mode"
     suggested_cmd=$(generate_command_fast "$user_prompt" "$current_shell")
   else
+    verbose "Executing in CONTEXT-AWARE mode"
     suggested_cmd=$(generate_command_with_context "$user_prompt" "$current_shell")
   fi
   
@@ -333,6 +347,7 @@ main() {
     exit 1
   fi
   
+  verbose "Command successfully generated (${#suggested_cmd} characters)"
   echo "$suggested_cmd"
 }
 
