@@ -6,8 +6,8 @@
 
 <h3 align="center">📟 Natural language to shell commands using Ollama 📟</h3>
  <p align="center">
-  <a href="https://github.com/GaelicThunder/pls">
-    <img alt="GitHub" src="https://img.shields.io/github/stars/GaelicThunder/pls?style=social" />
+  <a href="https://github.com/sukumargv/pls">
+    <img alt="GitHub" src="https://img.shields.io/github/stars/sukumargv/pls?style=social" />
   </a>
     <a href="https://aur.archlinux.org/packages/pls-cli-git">
   <img alt="AUR Package" src="https://img.shields.io/aur/version/pls-cli-git" />
@@ -49,7 +49,7 @@ After a response is generated, you can edit it before pressing enter to execute 
 ### Quick Install
 
 ```bash
-git clone https://github.com/GaelicThunder/pls.git
+git clone https://github.com/sukumargv/pls.git
 cd pls
 chmod +x install.sh
 ./install.sh
@@ -59,7 +59,7 @@ chmod +x install.sh
 
 1. **Clone the repository**:
    ```bash
-   git clone https://github.com/GaelicThunder/pls.git
+   git clone https://github.com/sukumargv/pls.git
    cd pls
    ```
 
